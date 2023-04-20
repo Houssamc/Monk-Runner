@@ -1,0 +1,7 @@
+# Monk Controls
+Move Left = A
+Move Right = D
+Attack = Q
+Roll = S
+Jump = W
+Heal = E
