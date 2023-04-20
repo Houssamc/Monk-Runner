@@ -1,0 +1,580 @@
+# imports
+import pygame, sys
+from monkandslime import monk_import_folder, slime_import_folder
+
+# init pygame and mixer
+pygame.init()
+pygame.mixer.init()
+
+# create screen
+SCREEN_WIDTH, SCREEN_HEIGHT = 1200, 600
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption('Monk Runner')
+
+# slime kill count score
+score = 0
+
+# monk class
+class Monk(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.import_monk_assets()
+        self.health = 100
+        self.attacking = False
+        self.frame_index = 0
+        self.animation_speed = 0.15
+        self.image = self.animations['idle'][self.frame_index]
+        self.rect = self.image.get_rect()
+        # set position at x - 150 so player starts at left edge of screen
+        self.rect.bottomleft = [x - 150, y]
+        self.y_velocity = 0
+        self.jump = False
+
+        # movement
+        self.direction = pygame.math.Vector2(0, 0)
+        self.speed = 5
+        self.gravity = 0.5
+        self.jump_speed = -16
+
+        # status
+        self.status = 'idle'
+        self.facing_right = True
+
+    def import_monk_assets(self):
+        monk_path = '../assets/monk/'
+        self.animations = {'idle': [], '2_atk': [], 'j_up': [], 'j_down': [], 'run': [],
+                           'roll': [], 'air_atk': [], 'take_hit': [], 'meditate': [], 'death': []}
+
+        for animation in self.animations.keys():
+            full_path = monk_path + animation
+            self.animations[animation] = monk_import_folder(full_path)
+
+    def animate(self):
+        animation = self.animations[self.status]
+
+        # loop over frame index
+        self.frame_index += self.animation_speed
+        if self.frame_index >= len(animation):
+            self.frame_index = 0
+
+        # lets the players turn around
+        image = animation[int(self.frame_index)]
+        if self.facing_right:
+            self.image = image
+        else:
+            flip_img = pygame.transform.flip(image, True, False)
+            self.image = flip_img
+
+    def move(self, screen_width, screen_height, surface, target):
+        GRAVITY = 0.2
+        dx = 0
+        dy = 0
+        keys = pygame.key.get_pressed()
+
+        # player movement
+        if keys[pygame.K_a]:
+            self.direction.x = -1
+            self.facing_right = False
+        elif keys[pygame.K_d]:
+            self.direction.x = 1
+            self.facing_right = True
+        else:
+            self.direction.x = 0
+
+        # player jump
+        if keys[pygame.K_w]:
+            self.monk_jump()
+
+        # roll animation
+        if keys[pygame.K_s]:
+            self.status = 'roll'
+
+        # apply player gravity
+        self.y_velocity += GRAVITY
+        dy += self.y_velocity
+
+        # values used to let player touch screen edges and not be launched back
+        pushback_left = -150
+        pushback_right = -150
+
+        # ensure player stays on screen
+        if self.rect.left + dx < pushback_left:
+            dx = pushback_left - self.rect.left
+        if self.rect.right + dx > screen_width - pushback_right:
+            dx = screen_width - pushback_right - self.rect.right
+
+        # ensure player doesn't fall through the screen
+        if self.rect.bottom + dy > screen_height:
+            self.y_velocity = 0
+            self.jump = False
+            dy = screen_height - self.rect.bottom
+
+        # update player position
+        self.rect.x += dx
+        self.rect.y += dy
+
+    def monk_attack(self, surface, slimes):
+        # set this if statement to check if monk health is greater than 0 only then can attack execute
+        if self.health > 0:
+            # for loop over all slimes
+            for slime in slimes:
+                # set monk to attacking
+                self.attacking = True
+                # attack rectangle set up around monk
+                # offset self.rect.width by 280 so attack doesn't land until monk and slime rectangles overlap and stops after they pass each other
+                attack_rect = pygame.Rect(self.rect.centerx, self.rect.y, self.rect.width - 280, self.rect.height)
+                keys = pygame.key.get_pressed()
+                # if player is attacking and key is pressed only then will hurt animation run
+                if attack_rect.colliderect(slime.rect) and keys[pygame.K_q]:
+                    slime.status = 'hurt'
+                    # nested if statement which allows slime to run its death animation
+                    if slime.animations['death']:
+                        slime.frame_index = len(slime.animations['death']) - 1
+                        slime.status = 'death'
+                        # run pop sound whenever monk hits slime
+                        pop_fx = pygame.mixer.Sound('../sounds/pop_fx.mp3')
+                        pop_fx.set_volume(1)
+                        pop_fx.play()
+                        # kills the slime so once it runs death animation it disappears
+                        slime.kill()
+                        # global score and increment score by 1 to add to kill count
+                        global score
+                        score += 1
+
+    def monk_score(self, screen):
+        global score
+        # create score text font and wrap score in a string
+        score_txt = font.render("Slime Kill Count: " + str(score), True, (0, 0, 0))
+        # blit score text to screen
+        screen.blit(score_txt, (900, 0))
+
+    def monk_win(self, screen):
+        # kill slime goal blit
+        goal_txt = font.render('Kill 100 Slimes and you Win :) ', True, (0, 0, 0))
+        screen.blit(goal_txt, (380, 30))
+        # global score
+        global score
+        # if statement to check if score is greater than 100
+        if score >= 100:
+            # if score is greater than number blit winning message
+            win_txt = font.render('You Won! :)', True, (0, 0, 0))
+            screen.blit(win_txt, (500, 60))
+            # restart text
+            restart_txt = font.render('You Won! Press Space to Restart or Escape to Quit :)', True, (0, 0, 0))
+            screen.blit(restart_txt, (250, 525))
+            # kill slimes once goal is reached
+            slimes.empty()
+
+    def monk_health_bar(self, screen):
+        # colors for health bar
+        RED = (255, 0, 0)
+        GREEN = (0, 255, 0)
+        WHITE = (255, 255, 255)
+        # sets green health bar to be able to lose health
+        ratio = self.health / 100
+        # monk health text above health bar
+        monk_health_txt = font.render('Monk Health', True, (0, 0, 0))
+        screen.blit(monk_health_txt, (0, 0))
+        pygame.draw.rect(screen, WHITE, (0, 40, 180, 20))
+        pygame.draw.rect(screen, RED, (0, 40, 180, 20))
+        pygame.draw.rect(screen, GREEN, (0, 40, 180 * ratio, 20))  # update width parameter based on health ratio
+
+        # check if monk has died and play death animation
+        if self.health <= 0:
+            if self.animations['death']:
+                self.frame_index = len(self.animations['death']) - 9
+                self.status = 'death'
+                self.speed = 0
+                self.jump = False
+                self.jump_speed = 0
+                self.attacking = False 
+                self.kill()
+
+    def monk_status(self):
+        # allows player to jump and run and if neither remain in idle 
+        if self.direction.y < 0:
+            self.status = 'j_up'
+        else:
+            self.status = 'j_down'
+            if self.direction.x != 0:
+                self.status = 'run'
+            else:
+                self.status = 'idle'
+            # ensures on player will stay in meditation state only while button e is pressed
+            key = pygame.key.get_pressed()
+            # if statement to check if player is in meditation state and only if health is greater than 0 can he use meditation to heal
+            if self.animations['meditate'] and key[pygame.K_e] and 100 >= self.health > 0:
+                # this code keeps the monk in meditation state takes the frame index in animations and -1, so it doesn't loop anymore
+                self.frame_index = len(self.animations['meditate']) - 1
+                self.status = 'meditate'
+                # increment health to heal up
+                self.health += 1
+            # else statement to check if monk health is less than 0 death animation will run and you cannot heal anymore
+            else:
+                # nested if statement to check if health is less than 0
+                if self.health <= 0:
+                    self.health = 0
+                    # run death animation and kill monk, so monk can't heal anymore
+                    self.frame_index = len(self.animations['death']) - 9
+                    self.status = 'death'
+                    self.kill()
+
+        # set attack only when key is pressed
+        key = pygame.key.get_pressed()
+        if key[pygame.K_q]:
+            self.status = '2_atk'
+
+    def monk_gravity(self):
+        # set gravity
+        self.direction.y += self.gravity
+        self.rect.y += self.direction.y
+
+    def monk_jump(self):
+        # sets monk to jump
+        self.direction.y = self.jump_speed
+
+    def draw(self):
+        # blit monk
+        screen.blit(self.image, self.rect)
+        # draw score, win message and health bar to screen
+        self.monk_score(screen)
+        self.monk_win(screen)
+        self.monk_health_bar(screen)
+
+    def update(self):
+        self.animate()
+        self.move(SCREEN_WIDTH, SCREEN_HEIGHT + 615 - SCREEN_HEIGHT, screen, self.rect.bottomleft)
+        self.monk_attack(screen, slimes)
+        self.monk_gravity()
+        self.monk_status()
+        # updates monk and allows him to move
+        self.rect.x += self.direction.x * self.speed
+
+# slime class
+class Slime(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.import_slime_assets()
+        self.health = 100
+        self.attacking = False
+        self.frame_index = 0
+        self.animation_speed = 0.15
+        self.image = self.animations['idle'][self.frame_index]
+        self.rect = self.image.get_rect()
+        self.rect.bottomright = [x, y]
+        self.y_velocity = 0
+        self.jump = False
+
+        # movement
+        self.direction = pygame.math.Vector2(0, 0)
+        self.speed = 5
+        self.gravity = 0.5
+        self.jump_speed = -16
+
+        # status
+        self.status = 'idle'
+        self.facing_left = True
+
+    def import_slime_assets(self):
+        slime_path = '../assets/slime/'
+        self.animations = {'idle': [], 'move': [], 'attack': [], 'hurt': [], 'death': []}
+
+        for animation in self.animations.keys():
+            full_path = slime_path + animation
+            self.animations[animation] = slime_import_folder(full_path)
+
+    def animate(self):
+        animation = self.animations[self.status]
+
+        # loop over frame index
+        self.frame_index += self.animation_speed
+        if self.frame_index >= len(animation):
+            self.frame_index = 0
+
+        # lets the slime turn around
+        image = animation[int(self.frame_index)]
+        if self.facing_left:
+            self.image = image
+        else:
+            flip_img = pygame.transform.flip(image, True, False)
+            self.image = flip_img
+
+    def slime_move(self, screen_width, screen_height, monk):
+        GRAVITY = 0.2
+        dx = 0
+        dy = 0
+
+        # apply slime gravity
+        self.y_velocity += GRAVITY
+        dy += self.y_velocity
+
+        # slime movement method
+        distance_to_monk = abs(self.rect.x - monk.rect.x)
+        # added 100 to screen width value so slime immediately moves towards monk
+        if distance_to_monk < 1300:
+            # -1200 allowed me to offset the distance so slime doesn't follow monk after passing him
+            if self.rect.x > monk.rect.x - 1200:
+                self.direction.x = -1
+                self.status = 'move'
+            else:
+                self.direction.x = 1
+                self.status = 'move'
+        else:
+            self.direction.x = 0
+
+        # update slimes change in horizontal position based on direction and speed
+        dx += self.direction.x * self.speed
+
+        # values used to let slime touch screen edges and not be launched back
+        pushback_left = -150
+        pushback_right = -150
+
+        # ensure slime stays on screen
+        if self.rect.left + dx < pushback_left:
+            dx = pushback_left - self.rect.left
+        if self.rect.right + dx > screen_width - pushback_right:
+            dx = screen_width - pushback_right - self.rect.right
+
+        # ensure slime doesn't fall through the screen
+        if self.rect.bottom + dy > screen_height:
+            self.y_velocity = 0
+            self.jump = False
+            dy = screen_height - self.rect.bottom
+
+        # update slime position
+        self.rect.x += dx
+        self.rect.y += dy
+        # double ensure that slime doesn't fall through the screen
+        self.direction.y = dy
+
+    def slime_attack(self, monk):
+        # set this if statement, so slime can only attack if monk health is greater than 0
+        if monk.health > 0:
+            # set slime to attack
+            self.attacking = True
+            # attack_rect1 offset self.rect.centerx by -280 so slime cant attack once monk passes through
+            attack_rect = pygame.Rect(self.rect.centerx - 280, self.rect.y, self.rect.width, self.rect.height)
+            # attack_rect2 + 20 to self.rect.centerx so attack doesn't run until monk and slime rectangles overlap from the front
+            attack_rect2 = pygame.Rect(self.rect.centerx + 20, self.rect.y, self.rect.width, self.rect.height)
+            # double collision detection to prevent early attack and prevents slime from attacking once monk passes overlap
+            if attack_rect.colliderect(monk.rect) and attack_rect2.colliderect(monk.rect):
+                self.status = 'attack'
+                monk.status = 'take_hit'
+                # set monk to take damage
+                monk.health -= 1
+
+    def slimes_win(self, screen):
+        # check if monk health is less than or equal to 0 and if so run death animation
+        if monk.health <= 0:
+            if monk.animations['death']:
+                monk.frame_index = len(monk.animations['death']) - 9
+                monk.status = 'death'
+                monk.attacking = False
+                monk.speed = 0
+                monk.jump = False
+                monk.jump_speed = 0
+                monk.kill()
+                # display you lost text
+                lost_txt = font.render('You Lost! :(', True, (0, 0, 0))
+                screen.blit(lost_txt, (500, 60))
+                # display restart text
+                restart_txt = font.render('You Lost! Press Space to Restart Game or Escape to Quit :(', True, (0, 0, 0))
+                screen.blit(restart_txt, (230, 525))
+
+    def slime_gravity(self):
+        # set slime gravity
+        self.direction.y += self.gravity
+        self.rect.y += self.direction.y
+
+    def draw(self):
+        # blit slime
+        screen.blit(self.image, self.rect)
+        # draw losing text  if monk dies
+        self.slimes_win(screen)
+
+    def update(self):
+        self.animate()
+        self.slime_move(SCREEN_WIDTH, SCREEN_HEIGHT, monk)
+        self.slime_attack(monk)
+        self.slime_gravity()
+        self.draw()
+
+        # remove slime if it's out of bounds
+        if self.rect.right < 0:
+            self.kill()
+
+# set all pictures and picture size
+sky = pygame.image.load('../images/background/PNG/City2/sky.png').convert_alpha()
+sky_resize = pygame.transform.scale(sky, (SCREEN_WIDTH, SCREEN_HEIGHT)).convert_alpha()
+back = pygame.image.load('../images/background/PNG/City2/back.png').convert_alpha()
+back_resize = pygame.transform.scale(back, (SCREEN_WIDTH, SCREEN_HEIGHT)).convert_alpha()
+back_houses = pygame.image.load('../images/background/PNG/City2/houses3.png').convert_alpha()
+back_houses_resize = pygame.transform.scale(back_houses, (SCREEN_WIDTH, SCREEN_HEIGHT)).convert_alpha()
+front_houses = pygame.image.load('../images/background/PNG/City2/houses1.png').convert_alpha()
+front_houses_resize = pygame.transform.scale(front_houses, (SCREEN_WIDTH, SCREEN_HEIGHT)).convert_alpha()
+shops = pygame.image.load('../images/background/PNG/City2/shops.png').convert_alpha()
+shops_resize = pygame.transform.scale(shops, (SCREEN_WIDTH, SCREEN_HEIGHT)).convert_alpha()
+road = pygame.image.load('../images/background/PNG/City2/road&lamps.png').convert_alpha()
+road_resize = pygame.transform.scale(road, (SCREEN_WIDTH, SCREEN_HEIGHT)).convert_alpha()
+
+# set scroll speed
+bg_scroll = 0
+mbg_scroll = 0
+
+def background():
+    global bg_scroll
+    # get widths of each individual png width
+    sky_width = sky_resize.get_width()
+    back_width = back_resize.get_width()
+    back_houses_width = back_houses_resize.get_width()
+
+    # for loop to blit far background images
+    for bg_scroll in range(3):
+        screen.blit(sky_resize, ((bg_scroll * sky_width) - bg_scroll * 0.5, 0))
+        screen.blit(back_resize, ((bg_scroll * back_width) - bg_scroll * 0.6, 0))
+        screen.blit(back_houses_resize, ((bg_scroll * back_houses_width) - bg_scroll * 0.7, 0))
+
+def moving_background():
+    global mbg_scroll
+    # get widths of each individual png
+    front_houses_resize_width = front_houses_resize.get_width()
+    shops_resize_width = shops_resize.get_width()
+    road_resize_width = road_resize.get_width()
+
+    # sets background images to move from left to right
+    screen.blit(front_houses_resize, (mbg_scroll % front_houses_resize_width - front_houses_resize_width, 0))
+    screen.blit(shops_resize, (mbg_scroll % shops_resize_width - shops_resize_width, 0))
+    screen.blit(road_resize, (mbg_scroll % road_resize_width - road_resize_width, 0))
+
+    # finishes up first blit and keep illusion going
+    screen.blit(front_houses_resize, (mbg_scroll % front_houses_resize_width, 0))
+    screen.blit(shops_resize, (mbg_scroll % shops_resize_width, 0))
+    screen.blit(road_resize, (mbg_scroll % road_resize_width, 0))
+
+# create player
+monk = Monk(0, 0)
+# create sprite group to allow new slimes to generate
+slimes = pygame.sprite.Group()
+# spawn slime method
+def spawn_slime():
+    # create new slime
+    new_slime = Slime(SCREEN_WIDTH, SCREEN_HEIGHT)
+    # add new slime to sprite group
+    slimes.add(new_slime)
+spawn_slime()  # Spawn initial slime
+
+# create spawn slime event
+SPAWN_SLIME_EVENT = pygame.USEREVENT + 1
+# set timer for 2 seconds so new slime can spawn in after in never ending cycle
+pygame.time.set_timer(SPAWN_SLIME_EVENT, 2000)
+
+# create frame rate
+FPS = 60
+clock = pygame.time.Clock()
+
+# font
+font = pygame.font.Font('../Font/PoetsenOne-Regular.ttf', 30)
+
+# sound
+main_fx = pygame.mixer.Sound('../sounds/password-infinity-123276.mp3')
+main_fx.set_volume(0.2)
+main_fx.play(loops=-1)
+
+# timer
+elapsed_time = 0
+start_ticks = pygame.time.get_ticks()
+
+# event loop
+if __name__ == "__main__":
+    run = True
+    while run:
+        # set frame rate and play sound
+        clock.tick(FPS)
+        # increment speeds of backgrounds
+        bg_scroll -= 1
+        mbg_scroll -= 1
+        # call functions
+        background()
+        moving_background()
+        # event handler
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                run = False
+            # event that spawns new slimes
+            if event.type == SPAWN_SLIME_EVENT:
+                spawn_slime()
+            # allow user to exit with escape key
+            key = pygame.key.get_pressed()
+            if key[pygame.K_ESCAPE]:
+                pygame.quit()
+                sys.exit()
+
+        # update time
+        elapsed_ticks = pygame.time.get_ticks() - start_ticks
+        elapsed_time = int(elapsed_ticks / 1000)
+
+        # convert time to minutes and seconds
+        minutes = elapsed_time // 60
+        seconds = elapsed_time % 60
+
+        # draw the timer
+        timer_text = font.render('Time: {:02d}:{:02d}'.format(minutes, seconds), True, (0, 0, 0))
+        screen.blit(timer_text, (500, 0))
+
+        # display monk movement and set his position lower on y-axis (SCREEN_HEIGHT + 615 - SCREEN_HEIGHT) no clue how it works lol
+        monk.move(SCREEN_WIDTH, SCREEN_HEIGHT + 615 - SCREEN_HEIGHT, screen, monk)
+
+        # draw and update monk/slime
+        monk.draw()
+        slimes.draw(screen)
+        monk.update()
+        slimes.update()
+
+        # restart the game if monk died
+        keys = pygame.key.get_pressed()
+        if monk.health <= 0 and keys[pygame.K_SPACE]:
+            # reset all game variables and clock
+            score = 0
+            elapsed_ticks = 0
+            start_ticks = pygame.time.get_ticks()
+            elapsed_time = 0
+            minutes = 0
+            seconds = 0
+            # reset monk and offset screen width by 1200 so that monk starts at left side of screen
+            monk = Monk(SCREEN_WIDTH - 1200, SCREEN_HEIGHT)
+            # reset slime group
+            slimes = pygame.sprite.Group()
+            # create spawn slime event
+            SPAWN_SLIME_EVENT = pygame.USEREVENT + 1
+            # set timer for 2 seconds so new slime can spawn
+            pygame.time.set_timer(SPAWN_SLIME_EVENT, 2000)
+            # spawn slimes again
+            spawn_slime()
+
+        # restart game if monk won
+        keys = pygame.key.get_pressed()
+        if score >= 100 and keys[pygame.K_SPACE]:
+            # reset all game variables and clock
+            score = 0
+            elapsed_ticks = 0
+            start_ticks = pygame.time.get_ticks()
+            elapsed_time = 0
+            minutes = 0
+            seconds = 0
+            # reset monk and offset screen width by 1200 so that monk starts at left side of screen
+            monk = Monk(SCREEN_WIDTH - 1200, SCREEN_HEIGHT)
+            # reset slime group
+            slimes = pygame.sprite.Group()
+            # create spawn slime event
+            SPAWN_SLIME_EVENT = pygame.USEREVENT + 1
+            # set timer for 2 seconds so new slime can spawn
+            pygame.time.set_timer(SPAWN_SLIME_EVENT, 2000)
+            # spawn slimes again
+            spawn_slime()
+
+        # update display
+        pygame.display.update()
+
+    # quit pygame
+    pygame.quit()
+    sys.exit()
